@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>🐎 UMAKING AI PREDICTOR</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@stlite/mountable@latest/build/stlite.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@stlite/mountable@latest/build/stlite.js"></script>
+    <script>
+      stlite.mount(
+        {
+          requirements: ["pandas", "plotly"],
+          entrypoint: "uma_app.py",
+          files: {
+            "uma_app.py": `
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+
+# ==========================================
+# ★設定エリア★
+# ==========================================
+APP_PASSWORD = "777" 
+# ▼▼▼ 絶対にここをあなたのGitHubのRawリンクに書き換えてください ▼▼▼
+CSV_URL = ""
+
+st.set_page_config(page_title="UMAKING AI PREDICTOR", page_icon="🐎", layout="wide")
+
+# ==========================================
+# 🔐 ログイン認証システム
+# ==========================================
+def check_password():
+    if "password_correct" not in st.session_state:
+        st.markdown("<h1 style='text-align: center; color: #FFD700;'>🔒 UMAKING PRO LOGIN</h1>", unsafe_allow_html=True)
+        pwd = st.text_input("PASSWORD", type="password", key="password_input")
+        if pwd == APP_PASSWORD:
+            st.session_state["password_correct"] = True
+            st.rerun()
+        elif pwd:
+            st.error("パスワードが違います")
+            
+        st.markdown("---")
+        st.markdown("<div style='text-align: center; color: #aaa;'>※本アプリの利用パスワードはnoteで限定公開しています</div>", unsafe_allow_html=True)
+        return False
+    return True
+
+if not check_password():
+    st.stop()
+
+# ==========================================
+# メインアプリ画面
+# ==========================================
+st.title("🐎 競馬場特化型 AI分析ツール")
+st.markdown("過去のビッグデータから、**「コースのクセ（枠順）」**と**「最強の騎手」**を導き出します。")
+
+@st.cache_data
+def load_data(url):
+    try:
+        # GitHubから直接データを読み込む
+        df = pd.read_csv(url)
+        place_map = {
+            "01": "札幌", "02": "函館", "03": "福島", "04": "新潟", "05": "東京",
+            "06": "中山", "07": "中京", "08": "京都", "09": "阪神", "10": "小倉"
+        }
+        df['場所コード'] = df['レースID'].astype(str).str[4:6]
+        df['競馬場名'] = df['場所コード'].map(place_map)
+        df['距離'] = pd.to_numeric(df['距離'], errors='coerce')
+        return df
+    except Exception as e:
+        return None
+
+with st.spinner('データベースを読み込んでいます...（数秒かかります）'):
+    df = load_data(CSV_URL)
+
+if df is None or len(df) == 0:
+    st.error("❌ データの読み込みに失敗しました。CSV_URLのリンクが間違っている可能性があります。")
+    st.stop()
+
+st.sidebar.header("🔍 レース条件を設定")
+
+place_list = df['競馬場名'].dropna().unique().tolist()
+selected_place = st.sidebar.selectbox("競馬場", place_list)
+
+surface_list = df[df['競馬場名'] == selected_place]['馬場'].dropna().unique().tolist()
+selected_surface = st.sidebar.radio("馬場", surface_list)
+
+available_distances = sorted(df[(df['競馬場名']==selected_place) & (df['馬場']==selected_surface)]['距離'].unique())
+if len(available_distances) > 0:
+    selected_distance = st.sidebar.selectbox("距離 (m)", available_distances)
+else:
+    st.sidebar.warning("この条件のデータがありません")
+    st.stop()
+
+if st.sidebar.button("🚀 AI分析スタート", type="primary"):
+    subset = df[
+        (df['競馬場名'] == selected_place) & 
+        (df['馬場'] == selected_surface) & 
+        (df['距離'] == selected_distance)
+    ]
+    
+    st.markdown("---")
+    st.markdown(f"## 🎯 分析結果：{selected_place} {selected_surface}{selected_distance}m")
+    st.caption(f"分析に使用したデータ数: {len(subset)} 件")
+    
+    if len(subset) == 0:
+        st.warning("条件に一致するデータがありませんでした。")
+        st.stop()
+
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📊 枠順別 勝率（有利・不利）")
+        waku_stats = subset.groupby('枠番')[['1着フラグ', '3着内フラグ']].mean() * 100
+        waku_stats = waku_stats.reset_index()
+        waku_stats.columns = ['枠番', '勝率(%)', '複勝率(%)']
+        
+        fig = px.bar(waku_stats, x='枠番', y='勝率(%)', 
+                     color='勝率(%)', color_continuous_scale='Reds',
+                     title="枠ごとの勝率（赤いほど優秀）", text_auto='.1f')
+        st.plotly_chart(fig, use_container_width=True)
+        
+        best_waku = waku_stats.loc[waku_stats['勝率(%)'].idxmax()]
+        worst_waku = waku_stats.loc[waku_stats['勝率(%)'].idxmin()]
+        st.info(f"**💡 AIの結論:** このコースは **{int(best_waku['枠番'])}枠** が勝率{best_waku['勝率(%)']:.1f}%で最強です！\\n逆に **{int(worst_waku['枠番'])}枠** は勝率{worst_waku['勝率(%)']:.1f}%しかなく危険です。")
+
+    with col2:
+        st.subheader("🏆 得意な騎手ランキング")
+        jockey_stats = subset.groupby('騎手')[['1着フラグ', '3着内フラグ']].agg(['mean', 'count'])
+        jockey_stats.columns = ['勝率', '騎乗数', '複勝率', 'del']
+        jockey_stats = jockey_stats[['勝率', '複勝率', '騎乗数']]
+        
+        jockey_stats = jockey_stats[jockey_stats['騎乗数'] >= 3]
+        jockey_stats['勝率'] = (jockey_stats['勝率'] * 100).round(1)
+        jockey_stats['複勝率'] = (jockey_stats['複勝率'] * 100).round(1)
+        
+        ranking = jockey_stats.sort_values('勝率', ascending=False).head(10)
+        st.dataframe(ranking[['勝率', '複勝率', '騎乗数']], use_container_width=True)
+        
+        if len(ranking) > 0:
+            top_jockey = ranking.index[0]
+            st.success(f"**👑 王様:** **{top_jockey}** 騎手が勝率 **{ranking.iloc[0]['勝率']}%** でトップ！")
+else:
+    st.info("👈 左のメニューで条件を選んで、分析スタートを押してください！")
+`
+          }
+        },
+        document.getElementById("root")
+      );
+    </script>
+  </body>
+</html>
